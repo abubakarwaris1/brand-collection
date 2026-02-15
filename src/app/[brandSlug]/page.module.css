@@ -1,0 +1,91 @@
+.page {
+    position: relative;
+    min-height: 100vh;
+    background: #fff;
+    overflow-x: hidden;
+}
+
+.container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 16px 24px 60px;
+    position: relative;
+    z-index: 1;
+}
+
+.ooonoLogo {
+    padding: 8px 0 0;
+}
+
+.errorPage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 60vh;
+    text-align: center;
+    padding: 40px;
+}
+
+.errorPage h1 {
+    font-size: 24px;
+    color: #1a1a1a;
+    margin-bottom: 8px;
+}
+
+.errorPage p {
+    color: #666;
+    font-size: 14px;
+}
+
+.footer {
+    margin-top: 48px;
+    padding: 24px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.madeWith {
+    font-size: 12px;
+    color: #999;
+    font-weight: 500;
+}
+
+/* Blue gradient glow on edges — matching reference */
+.glowLeft,
+.glowRight {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    width: 200px;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.glowLeft {
+    left: 0;
+    background: radial-gradient(ellipse at left center, rgba(120, 160, 255, 0.15) 0%, transparent 70%);
+}
+
+.glowRight {
+    right: 0;
+    background: radial-gradient(ellipse at right center, rgba(120, 160, 255, 0.15) 0%, transparent 70%);
+}
+
+@media (max-width: 600px) {
+    .container {
+        padding: 12px 16px 40px;
+    }
+
+    .glowLeft,
+    .glowRight {
+        width: 100px;
+    }
+}
+
+@media (min-width: 1440px) {
+    .container {
+        max-width: 1268px;
+    }
+}
