@@ -15,6 +15,7 @@ interface CollectionGridProps {
 export default function CollectionGrid({ collections, brandSlug }: CollectionGridProps) {
     const [activeFilter, setActiveFilter] = useState('All');
     const [openCollection, setOpenCollection] = useState<Collection | null>(null);
+    const [initialStoryIndex, setInitialStoryIndex] = useState(0);
 
     // Get unique collection names for filter chips
     const filterLabels = useMemo(
@@ -28,14 +29,18 @@ export default function CollectionGrid({ collections, brandSlug }: CollectionGri
         return collections.filter((c) => c.name === activeFilter);
     }, [collections, activeFilter]);
 
-    // Check URL for collection param on mount
+    // Check URL for collection and story params on mount
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
         const collectionSlug = params.get('collection');
+        const storyParam = params.get('story');
         if (collectionSlug) {
             const found = collections.find((c) => c.slug === collectionSlug);
             if (found) {
                 setOpenCollection(found);
+                if (storyParam) {
+                    setInitialStoryIndex(Math.max(0, parseInt(storyParam, 10) - 1));
+                }
             }
         }
 
@@ -52,6 +57,7 @@ export default function CollectionGrid({ collections, brandSlug }: CollectionGri
     }, [collections]);
 
     const handleCollectionClick = (collection: Collection) => {
+        setInitialStoryIndex(0);
         setOpenCollection(collection);
     };
 
@@ -94,6 +100,7 @@ export default function CollectionGrid({ collections, brandSlug }: CollectionGri
                 <StoryPlayer
                     collection={openCollection}
                     brandSlug={brandSlug}
+                    initialStoryIndex={initialStoryIndex}
                     onClose={handleClosePlayer}
                 />
             )}

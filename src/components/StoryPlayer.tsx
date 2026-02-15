@@ -8,11 +8,15 @@ import styles from './StoryPlayer.module.css';
 interface StoryPlayerProps {
     collection: Collection;
     brandSlug: string;
+    initialStoryIndex?: number;
     onClose: () => void;
 }
 
-function getStoryAmpUrl(brandSlug: string, collection: Collection): string {
-    return `https://staging-brand.oono.ai/amp?brandId=${brandSlug}&collection=${collection._id || collection.collectionId}&player=true`;
+// Build a unique AMP URL per story so the player can distinguish them
+function getStoryAmpUrl(brandSlug: string, collection: Collection, story: Story): string {
+    const collectionId = collection._id || collection.collectionId;
+    const storyId = story._id || story.storyId || story.slug;
+    return `https://staging-brand.oono.ai/amp?brandId=${brandSlug}&collection=${collectionId}&story=${storyId}&player=true`;
 }
 
 function getStoryPosterUrl(story: Story): string {
@@ -22,11 +26,12 @@ function getStoryPosterUrl(story: Story): string {
     return '';
 }
 
-export default function StoryPlayer({ collection, brandSlug, onClose }: StoryPlayerProps) {
+export default function StoryPlayer({ collection, brandSlug, initialStoryIndex = 0, onClose }: StoryPlayerProps) {
     const overlayRef = useRef<HTMLDivElement>(null);
     const playerWrapperRef = useRef<HTMLDivElement>(null);
     const playerElementRef = useRef<any>(null);
     const [playerReady, setPlayerReady] = useState(false);
+    const currentStoryIndexRef = useRef(initialStoryIndex);
 
     const stories: Story[] = (collection.stories || [])
         .filter((s) => !s.isDraft)
@@ -36,13 +41,16 @@ export default function StoryPlayer({ collection, brandSlug, onClose }: StoryPla
             return orderA - orderB;
         });
 
-    // Navigate using the AMP player's programmatic API: player.go(delta)
-    // go(1) = next page, go(-1) = previous page
+    // Navigate using the AMP player's programmatic API
+    // go(0, ±1) = page navigation (next/prev page within a story)
+    // go(±1)    = story navigation (next/prev story in the playlist)
     const navigatePlayer = useCallback((direction: 'prev' | 'next') => {
         const player = playerElementRef.current;
         if (!player || typeof player.go !== 'function') return;
-        const delta = direction === 'next' ? 1 : -1;
-        player.go(delta, 0);
+
+        const pageDelta = direction === 'next' ? 1 : -1;
+        // Use page navigation: go(storyDelta=0, pageDelta=±1)
+        player.go(0, pageDelta);
     }, []);
 
     // Handle keyboard events
@@ -64,6 +72,9 @@ export default function StoryPlayer({ collection, brandSlug, onClose }: StoryPla
     useEffect(() => {
         const currentUrl = new URL(window.location.href);
         currentUrl.searchParams.set('collection', collection.slug);
+        if (initialStoryIndex > 0) {
+            currentUrl.searchParams.set('story', String(initialStoryIndex + 1));
+        }
         window.history.pushState({}, '', currentUrl.toString());
 
         document.addEventListener('keydown', handleKeyDown);
@@ -84,10 +95,11 @@ export default function StoryPlayer({ collection, brandSlug, onClose }: StoryPla
     useEffect(() => {
         if (!playerWrapperRef.current || stories.length === 0) return;
 
-        const storyUrl = getStoryAmpUrl(brandSlug, collection);
+        // Build unique <a> per story so the player can distinguish them
         const storyLinks = stories.map((story) => {
+            const href = getStoryAmpUrl(brandSlug, collection, story);
             const posterUrl = getStoryPosterUrl(story);
-            return `<a href="${storyUrl}"${posterUrl ? ` data-poster-portrait-src="${posterUrl}"` : ''}></a>`;
+            return `<a href="${href}"${posterUrl ? ` data-poster-portrait-src="${posterUrl}"` : ''}></a>`;
         }).join('\n');
 
         const playerHTML = `
@@ -101,39 +113,60 @@ export default function StoryPlayer({ collection, brandSlug, onClose }: StoryPla
         // Get the amp-story-player element reference
         const playerEl = playerWrapperRef.current.querySelector('amp-story-player');
 
-        // Load AMP CSS
-        const existingStyle = document.querySelector('link[href*="amp-story-player"]');
-        if (!existingStyle) {
+        // Load AMP CSS (once)
+        if (!document.querySelector('link[href*="amp-story-player"]')) {
             const link = document.createElement('link');
             link.rel = 'stylesheet';
             link.href = 'https://cdn.ampproject.org/amp-story-player-v0.css';
             document.head.appendChild(link);
         }
 
-        // Remove old script so AMP re-initializes
-        const existingScript = document.querySelector('script[src*="amp-story-player"]');
-        if (existingScript) {
-            existingScript.remove();
-        }
-
-        if ((window as any).AmpStoryPlayer) {
-            delete (window as any).AmpStoryPlayer;
-        }
-
-        // Listen for the player's 'ready' event — this fires when the player
-        // has fully initialized and its API methods (go, show, etc.) are available
+        // Listen for the player's 'ready' event — fires when API methods are available
         if (playerEl) {
             playerEl.addEventListener('ready', () => {
                 playerElementRef.current = playerEl;
                 setPlayerReady(true);
+
+                // If an initial story index is set, navigate to that story
+                if (initialStoryIndex > 0 && typeof (playerEl as any).show === 'function') {
+                    const targetStory = stories[initialStoryIndex];
+                    if (targetStory) {
+                        const targetUrl = getStoryAmpUrl(brandSlug, collection, targetStory);
+                        (playerEl as any).show(targetUrl);
+                    }
+                }
+
+                // Debug listeners — track story and page changes
+                playerEl.addEventListener('navigation', (e: any) => {
+                    const idx = e.detail?.index ?? 0;
+                    console.log('STORY changed -> index:', idx, 'remaining:', e.detail?.remaining);
+                    currentStoryIndexRef.current = idx;
+                    // Update URL with story param
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('story', String(idx + 1));
+                    window.history.replaceState({}, '', url.toString());
+                });
+
+                playerEl.addEventListener('storyNavigation', (e: any) => {
+                    console.log('PAGE changed -> pageId:', e.detail?.pageId, 'progress:', e.detail?.progress);
+                });
             });
+        }
+
+        // Remove old script and re-add so AMP re-initializes the new player element
+        const existingScript = document.querySelector('script[src*="amp-story-player"]');
+        if (existingScript) {
+            existingScript.remove();
+        }
+        if ((window as any).AmpStoryPlayer) {
+            delete (window as any).AmpStoryPlayer;
         }
 
         const script = document.createElement('script');
         script.async = true;
         script.src = 'https://cdn.ampproject.org/amp-story-player-v0.js';
         script.onload = () => {
-            // Fallback: if 'ready' event doesn't fire within 3s, check if go() exists
+            // Fallback: if 'ready' event doesn't fire within 3s
             setTimeout(() => {
                 if (playerEl && typeof (playerEl as any).go === 'function') {
                     playerElementRef.current = playerEl;
