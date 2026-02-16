@@ -1,7 +1,5 @@
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging-apis-v2.oono.ai';
 export const MEDIA_BASE_URL = process.env.NEXT_PUBLIC_MEDIA_BASE_URL || 'https://media.oono.ai/uploads';
-export const BRAND_BASE_URL = process.env.NEXT_PUBLIC_BRAND_BASE_URL || 'https://staging-brand.oono.ai';
-
 export function getMediaUrl(path: string): string {
     if (!path) return '';
     if (path.startsWith('http')) return path;
@@ -9,6 +7,3 @@ export function getMediaUrl(path: string): string {
     return `${MEDIA_BASE_URL}/${path}`;
 }
 
-export function getStoryPlayerUrl(brandSlug: string, collectionSlug: string, storySlug: string): string {
-    return `/${brandSlug}?collection=${collectionSlug}&story=${storySlug}`;
-}

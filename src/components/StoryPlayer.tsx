@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { getMediaUrl, BRAND_BASE_URL } from '@/lib/constants';
+import { getMediaUrl } from '@/lib/constants';
 import type { Collection, Story } from '@/lib/types';
 import styles from './StoryPlayer.module.css';
 
@@ -14,7 +14,7 @@ interface StoryPlayerProps {
 
 function getCollectionAmpUrl(brandSlug: string, collection: Collection): string {
     const collectionId = collection._id || collection.collectionId;
-    return `${BRAND_BASE_URL}/amp?brandId=${brandSlug}&collection=${collectionId}&player=true`;
+    return `/api/amp-story/${brandSlug}/${collectionId}`;
 }
 
 function getStoryPosterUrl(story: Story): string {
@@ -102,9 +102,16 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
         const collectionUrl = getCollectionAmpUrl(brandSlug, collection);
         const posterUrl = stories.length > 0 ? getStoryPosterUrl(stories[0]) : '';
 
+        // Build story URL with cache-busting and hash-based page navigation.
+        // The AMP story runtime reads #page=page-N to start at a specific page.
+        // All pages remain in the DOM with normal durations — user can navigate backward.
+        const cacheBuster = `?t=${Date.now()}`;
+        const pageHash = initialStoryIndex > 0 ? `#page=page-${initialStoryIndex}` : '';
+        const storyHref = `${collectionUrl}${cacheBuster}${pageHash}`;
+
         playerWrapperRef.current.innerHTML = `
             <amp-story-player style="width: 100%; height: 100%;" layout="fill">
-                <a href="${collectionUrl}"${posterUrl ? ` data-poster-portrait-src="${posterUrl}"` : ''}></a>
+                <a href="${storyHref}"${posterUrl ? ` data-poster-portrait-src="${posterUrl}"` : ''}></a>
             </amp-story-player>
         `;
 
@@ -117,54 +124,63 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
             document.head.appendChild(link);
         }
 
-        if (playerEl) {
-            playerEl.addEventListener('ready', () => {
-                playerElementRef.current = playerEl;
-                setPlayerReady(true);
+        // Wire up event listeners once the player is ready
+        const onPlayerReady = () => {
+            playerElementRef.current = playerEl;
+            setPlayerReady(true);
 
-                // Deep-link: skip forward to the target story page
-                if (initialStoryIndex > 0) {
-                    const skipToPage = (i: number) => {
-                        if (i < initialStoryIndex) {
-                            (playerEl as any).go(0, 1);
-                            setTimeout(() => skipToPage(i + 1), 100);
-                        }
-                    };
-                    setTimeout(() => skipToPage(0), 300);
-                }
-
-                // Sync URL when pages change (covers direct taps on story)
-                playerEl.addEventListener('storyNavigation', (e: any) => {
-                    const progress = e.detail?.progress ?? 0;
-                    const estimatedIndex = Math.round(progress * (stories.length - 1));
-                    currentStoryIndexRef.current = estimatedIndex;
-                    syncUrlParams(collection.slug, estimatedIndex);
-                });
-
-                playerEl.addEventListener('navigation', (e: any) => {
-                    const idx = e.detail?.index ?? 0;
-                    currentStoryIndexRef.current = idx;
-                    syncUrlParams(collection.slug, idx);
-                });
+            // Sync URL when pages change (covers direct taps on story)
+            playerEl!.addEventListener('storyNavigation', (e: any) => {
+                const progress = e.detail?.progress ?? 0;
+                const estimatedIndex = Math.round(progress * (stories.length - 1));
+                currentStoryIndexRef.current = estimatedIndex;
+                syncUrlParams(collection.slug, estimatedIndex);
             });
+
+            playerEl!.addEventListener('navigation', (e: any) => {
+                const idx = e.detail?.index ?? 0;
+                currentStoryIndexRef.current = idx;
+                syncUrlParams(collection.slug, idx);
+            });
+        };
+
+        if (playerEl) {
+            playerEl.addEventListener('ready', onPlayerReady);
         }
 
-        const existingScript = document.querySelector('script[src*="amp-story-player"]');
-        if (existingScript) existingScript.remove();
-        if ((window as any).AmpStoryPlayer) delete (window as any).AmpStoryPlayer;
-
-        const script = document.createElement('script');
-        script.async = true;
-        script.src = 'https://cdn.ampproject.org/amp-story-player-v0.js';
-        script.onload = () => {
-            setTimeout(() => {
-                if (playerEl && typeof (playerEl as any).go === 'function') {
-                    playerElementRef.current = playerEl;
-                    setPlayerReady(true);
+        // Manually initialize the player.
+        // The AMP script auto-discovers <amp-story-player> on DOMContentLoaded,
+        // but DOMContentLoaded has already fired by the time React mounts this
+        // component. We need to construct the player instance manually.
+        const initPlayer = () => {
+            const AmpStoryPlayer = (window as any).AmpStoryPlayer;
+            if (playerEl && AmpStoryPlayer) {
+                try {
+                    const instance = new AmpStoryPlayer(window, playerEl);
+                    instance.load();
+                } catch {
+                    // Player may already be initialized, that's fine
                 }
-            }, 3000);
+            }
         };
-        document.head.appendChild(script);
+
+        const existingScript = document.querySelector('script[src*="amp-story-player"]');
+
+        if (existingScript && (window as any).AmpStoryPlayer) {
+            // Script already loaded from a previous mount — just re-init
+            initPlayer();
+        } else {
+            // Load the script fresh
+            if (existingScript) existingScript.remove();
+
+            const script = document.createElement('script');
+            script.async = true;
+            script.src = 'https://cdn.ampproject.org/amp-story-player-v0.js';
+            script.onload = () => {
+                initPlayer();
+            };
+            document.head.appendChild(script);
+        }
 
         return () => {
             playerElementRef.current = null;
@@ -172,7 +188,7 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
                 playerWrapperRef.current.innerHTML = '';
             }
         };
-    }, [stories, brandSlug, collection]);
+    }, [stories, brandSlug, collection, initialStoryIndex]);
 
     const handleOverlayClick = (e: React.MouseEvent) => {
         if (e.target === overlayRef.current) onClose();
