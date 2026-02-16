@@ -12,11 +12,10 @@ interface StoryPlayerProps {
     onClose: () => void;
 }
 
-// Build a unique AMP URL per story so the player can distinguish them
-function getStoryAmpUrl(brandSlug: string, collection: Collection, story: Story): string {
+// Build the AMP URL for the collection — all stories are rendered as pages within one AMP story
+function getCollectionAmpUrl(brandSlug: string, collection: Collection): string {
     const collectionId = collection._id || collection.collectionId;
-    const storyId = story._id || story.storyId || story.slug;
-    return `https://staging-brand.oono.ai/amp?brandId=${brandSlug}&collection=${collectionId}&story=${storyId}&player=true`;
+    return `https://staging-brand.oono.ai/amp?brandId=${brandSlug}&collection=${collectionId}&player=true`;
 }
 
 function getStoryPosterUrl(story: Story): string {
@@ -24,6 +23,14 @@ function getStoryPosterUrl(story: Story): string {
     if (story.thumbnail && !story.thumbnail.startsWith('#')) return getMediaUrl(story.thumbnail);
     if (story.backgroundType === 'IMAGE' && story.background) return getMediaUrl(story.background);
     return '';
+}
+
+// Update the browser URL with collection and story params
+function syncUrlParams(collectionSlug: string, storyIndex: number) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('collection', collectionSlug);
+    url.searchParams.set('story', String(storyIndex + 1));
+    window.history.replaceState({}, '', url.toString());
 }
 
 export default function StoryPlayer({ collection, brandSlug, initialStoryIndex = 0, onClose }: StoryPlayerProps) {
@@ -43,15 +50,19 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
 
     // Navigate using the AMP player's programmatic API
     // go(0, ±1) = page navigation (next/prev page within a story)
-    // go(±1)    = story navigation (next/prev story in the playlist)
     const navigatePlayer = useCallback((direction: 'prev' | 'next') => {
         const player = playerElementRef.current;
         if (!player || typeof player.go !== 'function') return;
 
         const pageDelta = direction === 'next' ? 1 : -1;
-        // Use page navigation: go(storyDelta=0, pageDelta=±1)
         player.go(0, pageDelta);
-    }, []);
+
+        // Track index and update URL — clamped to valid range
+        const newIndex = currentStoryIndexRef.current + pageDelta;
+        const clampedIndex = Math.max(0, Math.min(stories.length - 1, newIndex));
+        currentStoryIndexRef.current = clampedIndex;
+        syncUrlParams(collection.slug, clampedIndex);
+    }, [collection.slug, stories.length]);
 
     // Handle keyboard events
     const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -69,12 +80,12 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
         }
     }, [onClose, navigatePlayer]);
 
+    // Set initial URL params and handle keyboard/body scroll
     useEffect(() => {
+        // Push initial URL with collection + story params
         const currentUrl = new URL(window.location.href);
         currentUrl.searchParams.set('collection', collection.slug);
-        if (initialStoryIndex > 0) {
-            currentUrl.searchParams.set('story', String(initialStoryIndex + 1));
-        }
+        currentUrl.searchParams.set('story', String(initialStoryIndex + 1));
         window.history.pushState({}, '', currentUrl.toString());
 
         document.addEventListener('keydown', handleKeyDown);
@@ -89,22 +100,20 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
             url.searchParams.delete('story');
             window.history.pushState({}, '', url.toString());
         };
-    }, [collection, handleKeyDown]);
+    }, [collection, handleKeyDown, initialStoryIndex]);
 
     // Initialize AMP story player
     useEffect(() => {
         if (!playerWrapperRef.current || stories.length === 0) return;
 
-        // Build unique <a> per story so the player can distinguish them
-        const storyLinks = stories.map((story) => {
-            const href = getStoryAmpUrl(brandSlug, collection, story);
-            const posterUrl = getStoryPosterUrl(story);
-            return `<a href="${href}"${posterUrl ? ` data-poster-portrait-src="${posterUrl}"` : ''}></a>`;
-        }).join('\n');
+        // Single <a> tag — the AMP page renders all stories in this collection
+        // as internal pages. go(0, ±1) navigates between them.
+        const collectionUrl = getCollectionAmpUrl(brandSlug, collection);
+        const posterUrl = stories.length > 0 ? getStoryPosterUrl(stories[0]) : '';
 
         const playerHTML = `
             <amp-story-player style="width: 100%; height: 100%;" layout="fill">
-                ${storyLinks}
+                <a href="${collectionUrl}"${posterUrl ? ` data-poster-portrait-src="${posterUrl}"` : ''}></a>
             </amp-story-player>
         `;
 
@@ -127,29 +136,43 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
                 playerElementRef.current = playerEl;
                 setPlayerReady(true);
 
-                // If an initial story index is set, navigate to that story
-                if (initialStoryIndex > 0 && typeof (playerEl as any).show === 'function') {
-                    const targetStory = stories[initialStoryIndex];
-                    if (targetStory) {
-                        const targetUrl = getStoryAmpUrl(brandSlug, collection, targetStory);
-                        (playerEl as any).show(targetUrl);
-                    }
+                // If deep-linking to a specific story, skip forward page by page
+                // Use delays so the AMP player processes each navigation
+                if (initialStoryIndex > 0) {
+                    const skipToPage = (i: number) => {
+                        if (i < initialStoryIndex) {
+                            (playerEl as any).go(0, 1);
+                            setTimeout(() => skipToPage(i + 1), 100);
+                        }
+                    };
+                    setTimeout(() => skipToPage(0), 300);
                 }
 
-                // Debug listeners — track story and page changes
-                playerEl.addEventListener('navigation', (e: any) => {
-                    const idx = e.detail?.index ?? 0;
-                    console.log('STORY changed -> index:', idx, 'remaining:', e.detail?.remaining);
-                    currentStoryIndexRef.current = idx;
-                    // Update URL with story param
-                    const url = new URL(window.location.href);
-                    url.searchParams.set('story', String(idx + 1));
-                    window.history.replaceState({}, '', url.toString());
+                // Track page changes within the story — update URL with current story index
+                playerEl.addEventListener('storyNavigation', (e: any) => {
+                    // The progress field tells us how far through the story we are (0-1)
+                    // Use it to calculate the story index
+                    const progress = e.detail?.progress ?? 0;
+                    const totalPages = stories.length;
+                    const estimatedIndex = Math.round(progress * (totalPages - 1));
+                    currentStoryIndexRef.current = estimatedIndex;
+                    syncUrlParams(collection.slug, estimatedIndex);
                 });
 
-                playerEl.addEventListener('storyNavigation', (e: any) => {
-                    console.log('PAGE changed -> pageId:', e.detail?.pageId, 'progress:', e.detail?.progress);
+                // Track story-level changes (safety net)
+                playerEl.addEventListener('navigation', (e: any) => {
+                    const idx = e.detail?.index ?? 0;
+                    currentStoryIndexRef.current = idx;
+                    syncUrlParams(collection.slug, idx);
                 });
+            });
+
+            // Also listen for 'navigation' directly on the element (some AMP versions
+            // emit this before 'ready' when auto-advancing)
+            playerEl.addEventListener('navigation', (e: any) => {
+                const idx = e.detail?.index ?? 0;
+                currentStoryIndexRef.current = idx;
+                syncUrlParams(collection.slug, idx);
             });
         }
 
