@@ -58,7 +58,6 @@ export async function fetchBrandPage(slug: string): Promise<BrandPageData | null
         if (result) {
             const hasStories = result.collections.some(c => (c.stories?.length ?? 0) > 0);
             if (hasStories) {
-                console.log('[API] Got data from stories-collection endpoint with stories');
                 return result;
             }
         }
@@ -70,11 +69,9 @@ export async function fetchBrandPage(slug: string): Promise<BrandPageData | null
     if (brandData) {
         const result = extractBrandPage(brandData, slug);
         if (result) {
-            console.log('[API] Got data from brand-collections endpoint, collections:', result.collections.length);
             return result;
         }
     }
 
-    console.error('[API] All endpoints failed for slug:', slug);
     return null;
 }

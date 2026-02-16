@@ -1,5 +1,6 @@
-export const API_BASE_URL = 'https://staging-apis-v2.oono.ai';
-export const MEDIA_BASE_URL = 'https://media.oono.ai/uploads';
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging-apis-v2.oono.ai';
+export const MEDIA_BASE_URL = process.env.NEXT_PUBLIC_MEDIA_BASE_URL || 'https://media.oono.ai/uploads';
+export const BRAND_BASE_URL = process.env.NEXT_PUBLIC_BRAND_BASE_URL || 'https://staging-brand.oono.ai';
 
 export function getMediaUrl(path: string): string {
     if (!path) return '';

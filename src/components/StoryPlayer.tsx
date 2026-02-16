@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { getMediaUrl } from '@/lib/constants';
+import { getMediaUrl, BRAND_BASE_URL } from '@/lib/constants';
 import type { Collection, Story } from '@/lib/types';
 import styles from './StoryPlayer.module.css';
 
@@ -14,7 +14,7 @@ interface StoryPlayerProps {
 
 function getCollectionAmpUrl(brandSlug: string, collection: Collection): string {
     const collectionId = collection._id || collection.collectionId;
-    return `https://staging-brand.oono.ai/amp?brandId=${brandSlug}&collection=${collectionId}&player=true`;
+    return `${BRAND_BASE_URL}/amp?brandId=${brandSlug}&collection=${collectionId}&player=true`;
 }
 
 function getStoryPosterUrl(story: Story): string {
