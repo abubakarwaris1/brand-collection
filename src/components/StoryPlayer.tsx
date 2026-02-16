@@ -12,7 +12,6 @@ interface StoryPlayerProps {
     onClose: () => void;
 }
 
-// Build the AMP URL for the collection — all stories are rendered as pages within one AMP story
 function getCollectionAmpUrl(brandSlug: string, collection: Collection): string {
     const collectionId = collection._id || collection.collectionId;
     return `https://staging-brand.oono.ai/amp?brandId=${brandSlug}&collection=${collectionId}&player=true`;
@@ -25,7 +24,6 @@ function getStoryPosterUrl(story: Story): string {
     return '';
 }
 
-// Update the browser URL with collection and story params
 function syncUrlParams(collectionSlug: string, storyIndex: number) {
     const url = new URL(window.location.href);
     url.searchParams.set('collection', collectionSlug);
@@ -48,8 +46,6 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
             return orderA - orderB;
         });
 
-    // Navigate using the AMP player's programmatic API
-    // go(0, ±1) = page navigation (next/prev page within a story)
     const navigatePlayer = useCallback((direction: 'prev' | 'next') => {
         const player = playerElementRef.current;
         if (!player || typeof player.go !== 'function') return;
@@ -57,14 +53,12 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
         const pageDelta = direction === 'next' ? 1 : -1;
         player.go(0, pageDelta);
 
-        // Track index and update URL — clamped to valid range
         const newIndex = currentStoryIndexRef.current + pageDelta;
         const clampedIndex = Math.max(0, Math.min(stories.length - 1, newIndex));
         currentStoryIndexRef.current = clampedIndex;
         syncUrlParams(collection.slug, clampedIndex);
     }, [collection.slug, stories.length]);
 
-    // Handle keyboard events
     const handleKeyDown = useCallback((e: KeyboardEvent) => {
         if (e.key === 'Escape') {
             e.preventDefault();
@@ -80,9 +74,8 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
         }
     }, [onClose, navigatePlayer]);
 
-    // Set initial URL params and handle keyboard/body scroll
+    // URL params + keyboard + scroll lock
     useEffect(() => {
-        // Push initial URL with collection + story params
         const currentUrl = new URL(window.location.href);
         currentUrl.searchParams.set('collection', collection.slug);
         currentUrl.searchParams.set('story', String(initialStoryIndex + 1));
@@ -102,27 +95,21 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
         };
     }, [collection, handleKeyDown, initialStoryIndex]);
 
-    // Initialize AMP story player
+    // AMP story player initialization
     useEffect(() => {
         if (!playerWrapperRef.current || stories.length === 0) return;
 
-        // Single <a> tag — the AMP page renders all stories in this collection
-        // as internal pages. go(0, ±1) navigates between them.
         const collectionUrl = getCollectionAmpUrl(brandSlug, collection);
         const posterUrl = stories.length > 0 ? getStoryPosterUrl(stories[0]) : '';
 
-        const playerHTML = `
+        playerWrapperRef.current.innerHTML = `
             <amp-story-player style="width: 100%; height: 100%;" layout="fill">
                 <a href="${collectionUrl}"${posterUrl ? ` data-poster-portrait-src="${posterUrl}"` : ''}></a>
             </amp-story-player>
         `;
 
-        playerWrapperRef.current.innerHTML = playerHTML;
-
-        // Get the amp-story-player element reference
         const playerEl = playerWrapperRef.current.querySelector('amp-story-player');
 
-        // Load AMP CSS (once)
         if (!document.querySelector('link[href*="amp-story-player"]')) {
             const link = document.createElement('link');
             link.rel = 'stylesheet';
@@ -130,14 +117,12 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
             document.head.appendChild(link);
         }
 
-        // Listen for the player's 'ready' event — fires when API methods are available
         if (playerEl) {
             playerEl.addEventListener('ready', () => {
                 playerElementRef.current = playerEl;
                 setPlayerReady(true);
 
-                // If deep-linking to a specific story, skip forward page by page
-                // Use delays so the AMP player processes each navigation
+                // Deep-link: skip forward to the target story page
                 if (initialStoryIndex > 0) {
                     const skipToPage = (i: number) => {
                         if (i < initialStoryIndex) {
@@ -148,48 +133,30 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
                     setTimeout(() => skipToPage(0), 300);
                 }
 
-                // Track page changes within the story — update URL with current story index
+                // Sync URL when pages change (covers direct taps on story)
                 playerEl.addEventListener('storyNavigation', (e: any) => {
-                    // The progress field tells us how far through the story we are (0-1)
-                    // Use it to calculate the story index
                     const progress = e.detail?.progress ?? 0;
-                    const totalPages = stories.length;
-                    const estimatedIndex = Math.round(progress * (totalPages - 1));
+                    const estimatedIndex = Math.round(progress * (stories.length - 1));
                     currentStoryIndexRef.current = estimatedIndex;
                     syncUrlParams(collection.slug, estimatedIndex);
                 });
 
-                // Track story-level changes (safety net)
                 playerEl.addEventListener('navigation', (e: any) => {
                     const idx = e.detail?.index ?? 0;
                     currentStoryIndexRef.current = idx;
                     syncUrlParams(collection.slug, idx);
                 });
             });
-
-            // Also listen for 'navigation' directly on the element (some AMP versions
-            // emit this before 'ready' when auto-advancing)
-            playerEl.addEventListener('navigation', (e: any) => {
-                const idx = e.detail?.index ?? 0;
-                currentStoryIndexRef.current = idx;
-                syncUrlParams(collection.slug, idx);
-            });
         }
 
-        // Remove old script and re-add so AMP re-initializes the new player element
         const existingScript = document.querySelector('script[src*="amp-story-player"]');
-        if (existingScript) {
-            existingScript.remove();
-        }
-        if ((window as any).AmpStoryPlayer) {
-            delete (window as any).AmpStoryPlayer;
-        }
+        if (existingScript) existingScript.remove();
+        if ((window as any).AmpStoryPlayer) delete (window as any).AmpStoryPlayer;
 
         const script = document.createElement('script');
         script.async = true;
         script.src = 'https://cdn.ampproject.org/amp-story-player-v0.js';
         script.onload = () => {
-            // Fallback: if 'ready' event doesn't fire within 3s
             setTimeout(() => {
                 if (playerEl && typeof (playerEl as any).go === 'function') {
                     playerElementRef.current = playerEl;
@@ -220,7 +187,6 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
             aria-modal="true"
             aria-label={`Story player: ${collection.name}`}
         >
-            {/* Left nav arrow — outside the player */}
             <button
                 className={`${styles.navArrow} ${styles.navArrowLeft}`}
                 onClick={() => navigatePlayer('prev')}
@@ -239,7 +205,6 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
                     </svg>
                 </button>
 
-                {/* Loading poster — shown until AMP player is ready */}
                 {!playerReady && stories.length > 0 && (
                     <div className={styles.posterPreview}>
                         {(() => {
@@ -262,14 +227,12 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
                     </div>
                 )}
 
-                {/* AMP story player */}
                 <div
                     className={styles.ampPlayerWrapper}
                     ref={playerWrapperRef}
                 />
             </div>
 
-            {/* Right nav arrow — outside the player */}
             <button
                 className={`${styles.navArrow} ${styles.navArrowRight}`}
                 onClick={() => navigatePlayer('next')}
