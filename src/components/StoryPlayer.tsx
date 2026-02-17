@@ -46,18 +46,61 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
             return orderA - orderB;
         });
 
+    // Find the AMP story iframe inside the player (may be nested in shadow DOM)
+    const findPlayerIframe = useCallback((): HTMLIFrameElement | null => {
+        const wrapper = playerWrapperRef.current;
+        if (!wrapper) return null;
+        const playerEl = wrapper.querySelector('amp-story-player');
+        if (!playerEl) return null;
+
+        // Direct child
+        let iframe = playerEl.querySelector('iframe') as HTMLIFrameElement | null;
+        if (iframe) return iframe;
+
+        // Inside shadow DOM intermediary
+        const intermediary = playerEl.querySelector('.i-amphtml-story-player-shadow-root-intermediary');
+        if (intermediary?.shadowRoot) {
+            iframe = intermediary.shadowRoot.querySelector('iframe') as HTMLIFrameElement | null;
+            if (iframe) return iframe;
+        }
+
+        // Player's own shadow root
+        if (playerEl.shadowRoot) {
+            iframe = playerEl.shadowRoot.querySelector('iframe') as HTMLIFrameElement | null;
+        }
+        return iframe;
+    }, []);
+
     const navigatePlayer = useCallback((direction: 'prev' | 'next') => {
-        const player = playerElementRef.current;
-        if (!player || typeof player.go !== 'function') return;
+        const key = direction === 'next' ? 'ArrowRight' : 'ArrowLeft';
 
-        const pageDelta = direction === 'next' ? 1 : -1;
-        player.go(0, pageDelta);
+        // Navigate by dispatching keyboard events directly to the AMP story
+        // inside the iframe. This works because the iframe is same-origin and
+        // the AMP story runtime handles ArrowRight/ArrowLeft for page navigation.
+        const iframe = findPlayerIframe();
+        if (iframe?.contentDocument) {
+            iframe.contentDocument.documentElement.dispatchEvent(
+                new KeyboardEvent('keydown', {
+                    key,
+                    code: key,
+                    bubbles: true,
+                    cancelable: true,
+                })
+            );
+        } else {
+            // Fallback to player go() if iframe access fails
+            const player = playerElementRef.current;
+            if (player && typeof player.go === 'function') {
+                try { player.go(0, direction === 'next' ? 1 : -1); } catch { /* ignore */ }
+            }
+        }
 
-        const newIndex = currentStoryIndexRef.current + pageDelta;
+        const delta = direction === 'next' ? 1 : -1;
+        const newIndex = currentStoryIndexRef.current + delta;
         const clampedIndex = Math.max(0, Math.min(stories.length - 1, newIndex));
         currentStoryIndexRef.current = clampedIndex;
         syncUrlParams(collection.slug, clampedIndex);
-    }, [collection.slug, stories.length]);
+    }, [collection.slug, stories.length, findPlayerIframe]);
 
     const handleKeyDown = useCallback((e: KeyboardEvent) => {
         if (e.key === 'Escape') {
@@ -125,7 +168,10 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
         }
 
         // Wire up event listeners once the player is ready
+        let isReady = false;
         const onPlayerReady = () => {
+            if (isReady) return;
+            isReady = true;
             playerElementRef.current = playerEl;
             setPlayerReady(true);
 
@@ -162,6 +208,14 @@ export default function StoryPlayer({ collection, brandSlug, initialStoryIndex =
                     // Player may already be initialized, that's fine
                 }
             }
+
+            // Fallback: if the 'ready' event doesn't fire within 2s,
+            // set the player ref directly so arrow buttons still work.
+            setTimeout(() => {
+                if (!isReady && playerEl) {
+                    onPlayerReady();
+                }
+            }, 2000);
         };
 
         const existingScript = document.querySelector('script[src*="amp-story-player"]');
